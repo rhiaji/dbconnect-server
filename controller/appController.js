@@ -1,28 +1,8 @@
 import { connectUserDB } from '../config/db.js'
 import Config from '../models/Config.js'
 import mongoose from 'mongoose'
-
-// Helper function to validate field types
-function validateFieldType(expectedType, value) {
-	switch (expectedType) {
-		case 'String':
-			return typeof value === 'string'
-		case 'Number':
-			return typeof value === 'number'
-		case 'Date':
-			return value instanceof Date
-		case 'Boolean':
-			return typeof value === 'boolean'
-		case 'Array':
-			return Array.isArray(value)
-		case 'Object':
-			return typeof value === 'object' && !Array.isArray(value) && value !== null
-		case 'Null':
-			return value === null
-		default:
-			return false
-	}
-}
+import { sendResponse } from '../utils/responseHelper.js'
+import { validateFieldType } from '../utils/validationHelper.js'
 
 export const getCollectionsHandler = async (req, res) => {
 	const { db } = req.query // Retrieve the db name from query params
@@ -51,18 +31,12 @@ export const getCollectionsHandler = async (req, res) => {
 			})
 		)
 
-		// Return the collection names along with their schemas
-		return res.json({
-			message: 'Collection names and schemas fetched successfully',
-			data: collectionsWithSchema,
-		})
+		// Return the response with the updated structure
+		return sendResponse(res, true, 'Collection names and schemas fetched successfully', db, 'collections', 'GET', collectionsWithSchema)
 	} catch (err) {
 		// Handle errors
 		console.error('Error during database connection or query:', err)
-		return res.status(500).json({
-			message: 'Failed to connect to the database or fetch collections',
-			error: err.message,
-		})
+		return sendResponse(res, false, 'Failed to connect to the database or fetch collections', db, 'collections', 'GET', { error: err.message })
 	}
 }
 
@@ -78,7 +52,7 @@ export const createCollectionHandler = async (req, res) => {
 		// Check if the combination of db and collectionName already exists in the config collection
 		const existingConfig = await Config.findOne({ db, collection: collection })
 		if (existingConfig) {
-			return res.status(400).json({ message: `Collection '${collection}' already exists in database '${db}'` })
+			return sendResponse(res, false, `Collection '${collection}' already exists in database '${db}'`, db, collection, 'POST', {})
 		}
 
 		// Add createdAt and updatedAt fields to the schema
@@ -97,15 +71,18 @@ export const createCollectionHandler = async (req, res) => {
 		await userConnection.db.createCollection(collection)
 
 		// Return success response
-		return res.json({
-			message: `Collection '${collection}' created successfully in database '${db}' with the defined schema`,
-		})
+		return sendResponse(
+			res,
+			true,
+			`Collection '${collection}' created successfully in database '${db}' with the defined schema`,
+			db,
+			collection,
+			'POST',
+			{}
+		)
 	} catch (err) {
 		console.error('Error creating collection or storing config:', err)
-		return res.status(500).json({
-			message: 'Failed to create the collection or store the schema',
-			error: err.message,
-		})
+		return sendResponse(res, false, 'Failed to create the collection or store the schema', db, collection, 'POST', { error: err.message })
 	}
 }
 
@@ -123,7 +100,7 @@ export const deleteCollectionHandler = async (req, res) => {
 
 		// If the collection does not exist, return an error message
 		if (!collectionNames.includes(collection)) {
-			return res.status(400).json({ message: `Collection '${collection}' does not exist` })
+			return sendResponse(res, false, `Collection '${collection}' does not exist`, db, collection, 'DELETE', {})
 		}
 
 		// Drop the collection from the user database
@@ -133,20 +110,29 @@ export const deleteCollectionHandler = async (req, res) => {
 		await Config.deleteOne({ db, collection }) // Delete the schema config for the collection
 
 		// Return success message
-		return res.json({ message: `Collection '${collection}' and its schema configuration deleted successfully from database '${db}'` })
+		return sendResponse(
+			res,
+			true,
+			`Collection '${collection}' and its schema configuration deleted successfully from database '${db}'`,
+			db,
+			collection,
+			'DELETE',
+			{}
+		)
 	} catch (err) {
 		// Handle errors
 		console.error('Error during database connection or collection deletion:', err)
-		return res.status(500).json({
-			message: 'Failed to connect to the database or delete the collection/config',
+		return sendResponse(res, false, 'Failed to connect to the database or delete the collection/config', db, collection, 'DELETE', {
 			error: err.message,
 		})
 	}
 }
 
 export const getDataCollectionHandler = async (req, res) => {
-	const { db } = req.query // Collection name
-	const { collection } = req.params
+	const { db } = req.query // Database name
+	const { collection } = req.params // Collection name
+	const page = parseInt(req.query.page) || 1 // Get the current page, default to 1 if not provided
+	const limit = parseInt(req.query.limit) || 100 // Get the limit, default to 100 if not provided
 
 	try {
 		// Connect to the user database dynamically
@@ -157,25 +143,43 @@ export const getDataCollectionHandler = async (req, res) => {
 		const collectionNames = collections.map((coll) => coll.name)
 
 		if (!collectionNames.includes(collection)) {
-			return res.status(400).json({ message: `Collection '${collection}' does not exist` })
+			return sendResponse(res, false, `Collection '${collection}' does not exist`, db, collection, 'GET', {})
 		}
 
-		// Fetch all documents from the collection
-		const data = await userConnection.collection(collection).find().toArray()
+		// Fetch the total number of documents in the collection
+		const totalDocuments = await userConnection.collection(collection).countDocuments()
 
-		// Return the fetched data
-		return res.json({ message: 'Data fetched successfully', data })
+		// Fetch paginated documents from the collection
+		const data = await userConnection
+			.collection(collection)
+			.find()
+			.skip((page - 1) * limit) // Skip documents based on the page number
+			.limit(limit) // Limit the number of documents per page
+			.toArray()
+
+		// Pagination information
+		const pagination = {
+			page,
+			limit,
+			total: totalDocuments,
+			hasMore: page * limit < totalDocuments, // Check if there's more data
+		}
+
+		// Return the response with the new structure
+		return sendResponse(res, true, `Successfully fetched data from collection '${collection}'`, db, collection, 'GET', {
+			data,
+			pagination,
+		})
 	} catch (err) {
 		console.error('Error fetching data:', err)
-		return res.status(500).json({
-			message: 'Failed to connect or fetch data from collection',
+		return sendResponse(res, false, `Failed to connect or fetch data from collection '${collection}'`, db, collection, 'GET', {
 			error: err.message,
 		})
 	}
 }
 
 export const postDataCollectionHandler = async (req, res) => {
-	const { data } = req.body // Collection info and data to insert
+	const { data } = req.body // Data to insert into the collection
 	const { collection } = req.params // Collection name from URL params
 	const { db } = req.query // Database name from the query string
 
@@ -186,7 +190,7 @@ export const postDataCollectionHandler = async (req, res) => {
 		// Check if the collection exists in the config collection
 		const config = await Config.findOne({ db, collection: collection })
 		if (!config) {
-			return res.status(400).json({ message: `Collection '${collection}' not found in the config` })
+			return sendResponse(res, false, `Collection '${collection}' not found in the config`, collection, 'POST', {})
 		}
 
 		// Ensure createdAt and updatedAt are present, if not, set them
@@ -202,59 +206,27 @@ export const postDataCollectionHandler = async (req, res) => {
 			data.updatedAt = new Date(data.updatedAt) // Convert string to Date object
 		}
 
-		// Validate the data against the schema in the config
-		for (const key in data) {
-			if (!config.schema[key]) {
-				return res.status(400).json({ message: `Field '${key}' is not defined in the schema` })
-			}
-
-			const expectedType = config.schema[key].type // Accessing 'type' of the schema
-			const actualValue = data[key]
-
-			// Type validation based on the schema type defined in the config
-			const isValidType = validateFieldType(expectedType, actualValue)
-			if (!isValidType) {
-				return res.status(400).json({ message: `Field '${key}' should be of type '${expectedType}'` })
-			}
-
-			// Check for uniqueness if the field is unique
-			if (config.schema[key].unique) {
-				const existingValue = await userConnection.collection(collection).findOne({ [key]: actualValue })
-				if (existingValue) {
-					return res.status(400).json({ message: `Field '${key}' with value '${actualValue}' must be unique.` })
-				}
-			}
-		}
-
 		// Insert the data into the collection
 		const result = await userConnection.collection(collection).insertOne(data)
 
-		// Return success message
-		return res.json({
-			message: `Data inserted successfully into collection '${collection}'`,
-			data: result,
-		})
+		// Return success message with the new structure
+		return sendResponse(res, true, `Data inserted successfully into collection '${collection}'`, db, collection, 'POST', { result })
 	} catch (err) {
 		// Handle duplicate key error for unique fields
 		if (err.code === 11000) {
-			return res.status(400).json({
-				message: 'Duplicate key error: Unique field constraint violated.',
-				error: err.message,
-			})
+			return sendResponse(res, false, `Duplicate key error: Unique field constraint violated.`, collection, 'POST', { error: err.message })
 		}
 
 		// General error handling
 		console.error('Error inserting data into collection:', err)
-		return res.status(500).json({
-			message: 'Failed to insert data into collection',
-			error: err.message,
-		})
+		return sendResponse(res, false, `Failed to insert data into collection '${collection}'`, collection, 'POST', { error: err.message })
 	}
 }
 
 export const updateDataCollectionHandler = async (req, res) => {
-	const { collection, db } = req.query // The collection name
-	const { dataId, update } = req.body // The filter and update data (dynamic)
+	const { db, id } = req.query // Database name and ID
+	const { collection } = req.params // Collection name
+	const { data } = req.body // Data to update
 
 	try {
 		// Connect to the user database dynamically
@@ -265,70 +237,60 @@ export const updateDataCollectionHandler = async (req, res) => {
 		const collectionNames = collections.map((coll) => coll.name)
 
 		if (!collectionNames.includes(collection)) {
-			return res.status(400).json({ message: `Collection '${collection}' does not exist` })
+			return sendResponse(res, false, `Collection '${collection}' does not exist`, db, collection, 'PUT', {})
 		}
 
 		// Check if the schema exists in the Config collection
 		const config = await Config.findOne({ db, collection })
 		if (!config) {
-			return res.status(400).json({ message: `Collection '${collection}' does not have a defined schema in the config` })
+			return sendResponse(res, false, `Collection '${collection}' does not have a defined schema in the config`, db, collection, 'PUT', {})
 		}
 
 		// Validate the update data against the schema
-		for (const key in update) {
+		for (const key in data) {
 			if (!config.schema[key]) {
-				return res.status(400).json({ message: `Field '${key}' is not defined in the schema` })
+				return sendResponse(res, false, `Field '${key}' is not defined in the schema`, db, collection, 'PUT', {})
 			}
 
 			const expectedType = config.schema[key].type // Get the expected type from the schema
-			const actualValue = update[key]
+			const actualValue = data[key]
 
 			// Type validation based on the schema type defined in the config
 			const isValidType = validateFieldType(expectedType, actualValue)
 			if (!isValidType) {
-				return res.status(400).json({ message: `Field '${key}' should be of type '${expectedType}'` })
+				return sendResponse(res, false, `Field '${key}' should be of type '${expectedType}'`, db, collection, 'PUT', {})
 			}
 
 			// If the field is unique, ensure no duplicates exist in the collection
 			if (config.schema[key].unique) {
 				const existingValue = await userConnection.collection(collection).findOne({ [key]: actualValue })
 				if (existingValue) {
-					return res.status(400).json({ message: `Field '${key}' with value '${actualValue}' must be unique.` })
+					return sendResponse(res, false, `Field '${key}' with value '${actualValue}' must be unique.`, db, collection, 'PUT', {})
 				}
 			}
 		}
 
-		// Update the documents in the collection
-		const result = await userConnection.collection(collection).updateMany(dataId, { $set: update })
+		// Convert objectId string to ObjectId type (MongoDB expects ObjectId, not string)
+		const objectIdConverted = new mongoose.Types.ObjectId(id)
 
-		// Return success message
-		return res.json({
-			message: `${result.modifiedCount} document(s) updated in collection '${collection}'`,
+		// Update the documents in the collection
+		const result = await userConnection.collection(collection).updateOne({ _id: objectIdConverted }, { $set: data })
+
+		// Return success message with the new structure
+		return sendResponse(res, true, `${result.modifiedCount} document(s) updated in collection '${collection}'`, db, collection, 'PUT', {
+			data: result,
+			updated: { ...data },
 		})
 	} catch (err) {
-		// Check if the error is a duplicate key error (for the unique constraint)
-		if (err.code === 11000) {
-			return res.status(400).json({
-				message: 'Duplicate key error: Unique field constraint violated.',
-				error: err.message,
-			})
-		}
-
-		// Handle other errors
 		console.error('Error updating data:', err)
-		return res.status(500).json({
-			message: 'Failed to update data in collection',
-			error: err.message,
-		})
+		return sendResponse(res, false, `Failed to update data in collection '${collection}'`, db, collection, 'PUT', { error: err.message })
 	}
 }
 
 export const deleteDataCollectionHandler = async (req, res) => {
-	const { collection } = req.params // ObjectId from URL parameter
-	const { id, db } = req.query // Collection and db from query string
-
+	const { collection } = req.params
+	const { id, db } = req.query
 	try {
-		// Connect to the user database dynamically using the 'db' query parameter
 		const userConnection = await connectUserDB(db)
 
 		// Check if the collection exists in the database
@@ -337,33 +299,24 @@ export const deleteDataCollectionHandler = async (req, res) => {
 
 		// Check if the collection exists
 		if (!collectionNames.includes(collection)) {
-			return res.status(400).json({ message: `Collection '${collection}' does not exist` })
+			return sendResponse(res, false, `Collection '${collection}' does not exist`, db, collection, 'DELETE', {})
 		}
 
 		// Convert objectId string to ObjectId type (MongoDB expects ObjectId, not string)
-		const objectIdConverted = new mongoose.Types.ObjectId(id) // Correct ObjectId conversion
+		const objectIdConverted = new mongoose.Types.ObjectId(id)
 
 		// Perform the deletion of the document by _id
 		const result = await userConnection.collection(collection).deleteOne({ _id: objectIdConverted })
 
 		// Check if the deletion was successful
 		if (result.deletedCount === 0) {
-			return res.status(404).json({
-				message: `No document found with the specified _id: '${id}'`,
-			})
+			return sendResponse(res, false, `No document found with the specified _id: '${id}'`, db, collection, 'DELETE', {})
 		}
 
-		// Return success message
-		return res.json({
-			message: `1 document deleted from collection '${collection}'`,
-			data: result,
-		})
+		// Return success message with the new structure
+		return sendResponse(res, true, `1 document deleted from collection '${collection}'`, db, collection, 'DELETE', { data: result })
 	} catch (err) {
-		// Handle errors
 		console.error('Error deleting data:', err)
-		return res.status(500).json({
-			message: 'Failed to delete data from collection',
-			error: err.message,
-		})
+		return sendResponse(res, false, `Failed to delete data from collection '${collection}'`, db, collection, 'DELETE', { error: err.message })
 	}
 }
