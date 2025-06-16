@@ -11,7 +11,7 @@ app.use(express.json())
 
 app.use(
 	cors({
-		origin: ['http://localhost:3000'], // Allow multiple origins
+		origin: ['http://localhost:3000', 'https://dbconnect-ten.vercel.app'], // Allow multiple origins
 		methods: ['GET', 'POST', 'PUT', 'DELETE'],
 		credentials: true,
 	})
