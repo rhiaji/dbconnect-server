@@ -4,6 +4,7 @@ import { connectDB } from './config/db.js'
 import appRoutes from './routes/appRoutes.js'
 import userRoutes from './routes/userRoutes.js'
 import cron from 'node-cron'
+import axios from 'axios'
 
 const app = express()
 connectDB()
