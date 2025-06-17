@@ -6,9 +6,11 @@ import {
 	updateUserHandler,
 	deleteUserHandler,
 	changePasswordHandler,
+	requestAuthKey,
 } from '../controller/userController.js'
 import { jwtVerify } from 'jose'
 import { JWT_SECRET } from '../config/config.js'
+import authMiddleware from '../middleware/middleware.js'
 
 // Helper function to verify JWT and attach the decoded payload to the request object
 const verifyToken = async (token, req, res) => {
@@ -34,19 +36,19 @@ function sendResponse(res, success, message, data = {}) {
 const router = express()
 
 // Route to get user information
-router.get('/', async (req, res) => {
-	const token = req.headers['x-auth-token']
-	if (!token) {
-		return sendResponse(res, false, 'No token provided')
-	}
+router.get('/', authMiddleware, getUserHandler)
 
-	// Verify the token
-	const isVerified = await verifyToken(token, req, res)
-	if (isVerified) {
-		// If verified, get the user data
-		await getUserHandler(req, res)
-	}
-})
+// Route to update user information
+router.put('/update', authMiddleware, updateUserHandler)
+
+// Route to change user password
+router.put('/change-password', authMiddleware, changePasswordHandler)
+
+// Route to delete user account
+router.delete('/delete', authMiddleware, deleteUserHandler)
+
+// Route to request authorization key
+router.put('/auth-key', authMiddleware, requestAuthKey)
 
 // Route to login the user
 router.post('/login', async (req, res) => {
@@ -77,51 +79,6 @@ router.post('/signup', async (req, res) => {
 	if (isVerified) {
 		// If verified, create the new user
 		await createUserHandler(req, res)
-	}
-})
-
-// Route to update user information
-router.put('/update', async (req, res) => {
-	const token = req.headers['x-auth-token']
-	if (!token) {
-		return sendResponse(res, false, 'No token provided')
-	}
-
-	// Verify the token
-	const isVerified = await verifyToken(token, req, res)
-	if (isVerified) {
-		// If verified, update the user information
-		await updateUserHandler(req, res)
-	}
-})
-
-// Route to change user password
-router.put('/change-password', async (req, res) => {
-	const token = req.headers['x-auth-token']
-	if (!token) {
-		return sendResponse(res, false, 'No token provided')
-	}
-
-	// Verify the token
-	const isVerified = await verifyToken(token, req, res)
-	if (isVerified) {
-		// If verified, change the user password
-		await changePasswordHandler(req, res)
-	}
-})
-
-// Route to delete user account
-router.delete('/delete', async (req, res) => {
-	const token = req.headers['x-auth-token']
-	if (!token) {
-		return sendResponse(res, false, 'No token provided')
-	}
-
-	// Verify the token
-	const isVerified = await verifyToken(token, req, res)
-	if (isVerified) {
-		// If verified, delete the user account
-		await deleteUserHandler(req, res)
 	}
 })
 

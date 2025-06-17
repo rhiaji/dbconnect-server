@@ -8,13 +8,26 @@ import {
 	updateDataCollectionHandler,
 	deleteDataCollectionHandler,
 } from '../controller/appController.js'
+import { jwtVerify } from 'jose' // For JWT verification
+import User from '../models/User.js' // Assuming you have a User model to fetch user data
 
 const router = express()
+
+// Helper function to decrypt the data if encrypted is true
+const decryptData = async (encryptedData, secretKey) => {
+	// Decrypt the data using your decryption logic, assuming it's a JWT or other format
+	// Implement decryption logic here (Example shown with jose)
+	try {
+		const { payload } = await jwtVerify(encryptedData, new TextEncoder().encode(secretKey))
+		return payload // Return the decrypted data
+	} catch (err) {
+		throw new Error('Error decrypting data')
+	}
+}
 
 // Route to fetch all collections or data from a collection
 router.get('/:collection', async (req, res) => {
 	const { collection } = req.params
-
 	try {
 		if (collection === 'collection') {
 			return getCollectionsHandler(req, res) // Fetch collections if 'collection' is the parameter
@@ -32,17 +45,41 @@ router.get('/:collection', async (req, res) => {
 
 // Dynamic POST handler: Create a collection or add data to an existing collection
 router.post('/:collection', async (req, res) => {
-	const { collectionSchema, data } = req.body // Extract schema or data from request body
+	const { collectionSchema } = req.body // Extract schema or data from request body
+
+	console.log(req.body)
 
 	try {
 		if (collectionSchema) {
-			return createCollectionHandler(req, res) // Create collection if schema is provided
-		} else if (data) {
-			return postDataCollectionHandler(req, res) // Insert data if data is provided
+			// If schema is provided, create a new collection
+			return createCollectionHandler(req, res)
 		} else {
-			return res.status(400).json({
-				message: "Request must contain either 'collectionSchema' for creating a collection or 'data' for inserting data.",
-			})
+			// If data is provided, check if it's encrypted
+			let { data, encrypted } = req.body.data
+
+			console.log(req.body)
+			if (encrypted) {
+				// Retrieve the user secretKey
+				const { userId } = req.account // Assuming the userId is available from JWT (req.account)
+				const user = await User.findById(userId)
+				if (!user) {
+					return res.status(400).json({ message: 'User not found' })
+				}
+
+				const secretKey = user.secretKey // Retrieve the secretKey from user data
+
+				// Decrypt the data if encrypted
+				const decrypted = await decryptData(data, secretKey)
+
+				// Assign the decrypted data to req.data
+				req.data = decrypted.data
+			} else {
+				// If not encrypted, just use the provided data
+				req.data = data
+			}
+
+			// After handling the encryption/decryption, insert the data into the collection
+			return postDataCollectionHandler(req, res)
 		}
 	} catch (err) {
 		console.error('Error processing POST request:', err)
@@ -55,7 +92,28 @@ router.post('/:collection', async (req, res) => {
 
 // PUT handler to update data in a collection
 router.put('/:collection', async (req, res) => {
+	let { data, encrypted } = req.body.data // Extract data from request body
+
 	try {
+		// Check if the data is encrypted
+		if (encrypted) {
+			// Retrieve the user secretKey
+			const { userId } = req.account // Assuming the userId is available from JWT (req.account)
+			const user = await User.findById(userId)
+			if (!user) {
+				return res.status(400).json({ message: 'User not found' })
+			}
+
+			const secretKey = user.secretKey // Retrieve the secretKey from user data
+
+			// Decrypt the data if encrypted
+			const decrypted = await decryptData(data, secretKey)
+
+			req.data = decrypted.data
+		} else {
+			req.data = data
+		}
+
 		return updateDataCollectionHandler(req, res)
 	} catch (err) {
 		console.error('Error updating data:', err)

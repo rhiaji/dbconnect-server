@@ -129,10 +129,10 @@ export const deleteCollectionHandler = async (req, res) => {
 }
 
 export const getDataCollectionHandler = async (req, res) => {
-	const { db } = req.query // Database name
+	const { db, id } = req.query // Database name and optional ID
 	const { collection } = req.params // Collection name
 	const page = parseInt(req.query.page) || 1 // Get the current page, default to 1 if not provided
-	const limit = parseInt(req.query.limit) || 100 // Get the limit, default to 100 if not provided
+	const limit = 100
 
 	try {
 		// Connect to the user database dynamically
@@ -146,7 +146,25 @@ export const getDataCollectionHandler = async (req, res) => {
 			return sendResponse(res, false, `Collection '${collection}' does not exist`, db, collection, 'GET', {})
 		}
 
-		// Fetch the total number of documents in the collection
+		// If an ID is provided, find the specific document by _id
+		if (id) {
+			// Convert the string ID to a MongoDB ObjectId type
+			const objectId = new mongoose.Types.ObjectId(id)
+
+			// Fetch the document with the specified ID
+			const document = await userConnection.collection(collection).findOne({ _id: objectId })
+
+			if (!document) {
+				return sendResponse(res, false, `Document with ID '${id}' not found`, db, collection, 'GET', {})
+			}
+
+			// Return the found document
+			return sendResponse(res, true, `Successfully fetched document with ID '${id}'`, db, collection, 'GET', {
+				data: document,
+			})
+		}
+
+		// If no ID is provided, fetch the total number of documents in the collection
 		const totalDocuments = await userConnection.collection(collection).countDocuments()
 
 		// Fetch paginated documents from the collection
@@ -179,7 +197,7 @@ export const getDataCollectionHandler = async (req, res) => {
 }
 
 export const postDataCollectionHandler = async (req, res) => {
-	const { data } = req.body // Data to insert into the collection
+	const data = req.data // Data to insert into the collection
 	const { collection } = req.params // Collection name from URL params
 	const { db } = req.query // Database name from the query string
 
@@ -193,7 +211,31 @@ export const postDataCollectionHandler = async (req, res) => {
 			return sendResponse(res, false, `Collection '${collection}' not found in the config`, collection, 'POST', {})
 		}
 
-		// Ensure createdAt and updatedAt are present, if not, set them
+		// Validate the data against the schema
+		for (const key in data) {
+			if (!config.schema[key]) {
+				return sendResponse(res, false, `Field '${key}' is not defined in the schema`, db, collection, 'POST', {})
+			}
+
+			const expectedType = config.schema[key].type // Get the expected type from the schema
+			const actualValue = data[key]
+
+			// Type validation based on the schema type defined in the config
+			const isValidType = validateFieldType(expectedType, actualValue)
+			if (!isValidType) {
+				return sendResponse(res, false, `Field '${key}' should be of type '${expectedType}'`, db, collection, 'POST', {})
+			}
+
+			// If the field is unique, ensure no duplicates exist in the collection
+			if (config.schema[key].unique) {
+				const existingValue = await userConnection.collection(collection).findOne({ [key]: actualValue })
+				if (existingValue) {
+					return sendResponse(res, false, `Field '${key}' with value '${actualValue}' must be unique.`, db, collection, 'POST', {})
+				}
+			}
+		}
+
+		// Ensure createdAt and updatedAt are present
 		if (!data.createdAt) {
 			data.createdAt = new Date() // Set current date if not provided
 		} else if (typeof data.createdAt === 'string') {
@@ -226,7 +268,7 @@ export const postDataCollectionHandler = async (req, res) => {
 export const updateDataCollectionHandler = async (req, res) => {
 	const { db, id } = req.query // Database name and ID
 	const { collection } = req.params // Collection name
-	const { data } = req.body // Data to update
+	const data = req.data
 
 	try {
 		// Connect to the user database dynamically
@@ -244,6 +286,12 @@ export const updateDataCollectionHandler = async (req, res) => {
 		const config = await Config.findOne({ db, collection })
 		if (!config) {
 			return sendResponse(res, false, `Collection '${collection}' does not have a defined schema in the config`, db, collection, 'PUT', {})
+		}
+
+		// Ensure that 'updatedAt' is always updated
+		if (data && Object.keys(data).length > 0) {
+			// Add the updatedAt field with the current timestamp if the data has changed
+			data.updatedAt = new Date()
 		}
 
 		// Validate the update data against the schema

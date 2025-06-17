@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs' // Import bcrypt to hash passwords
 import { SignJWT } from 'jose' // Importing SignJWT from jose
+import { JWT_SECRET } from '../config/config.js'
 import User from '../models/User.js' // Import the User model
 
 // Helper function for sending consistent responses
@@ -72,6 +73,7 @@ export const loginUserHandler = async (req, res) => {
 		const payload = {
 			userId: user._id.toString(),
 			username: user.username,
+			isWebsiteKey: true,
 		}
 
 		// Create the JWT token
@@ -208,5 +210,49 @@ export const deleteUserHandler = async (req, res) => {
 	} catch (err) {
 		console.error('Error deleting user:', err)
 		return sendResponse(res, false, 'Server error', { error: err.message })
+	}
+}
+
+export const requestAuthKey = async (req, res) => {
+	const { userId, username } = req.account // Extract userId from the authenticated account (decoded from JWT)
+
+	// Create the payload for the JWT (API Key)
+	const payload = {
+		userId: userId,
+		username: username,
+		isAuthorized: true,
+		isWebsiteKey: false,
+	}
+
+	try {
+		// Find the user by userId
+		const user = await User.findById(userId)
+		if (!user) {
+			return sendResponse(res, false, 'User not found')
+		}
+
+		// Create a new JWT API key
+		const authKey = await new SignJWT(payload)
+			.setProtectedHeader({ alg: 'HS256' })
+			.setIssuedAt()
+			.setExpirationTime('7d') // Example expiration time (7 days)
+			.sign(new TextEncoder().encode(JWT_SECRET)) // Sign with your secret key
+
+		user.authorizationKey = authKey
+
+		await user.save()
+
+		// Return the API key (JWT) to the client
+		return res.json({
+			success: true,
+			message: 'Authorization key generated successfully.',
+		})
+	} catch (err) {
+		console.error('Error generating API key:', err)
+		return res.status(500).json({
+			success: false,
+			message: 'Failed to generate API key.',
+			error: err.message,
+		})
 	}
 }

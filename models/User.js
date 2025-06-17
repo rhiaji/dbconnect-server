@@ -7,7 +7,7 @@ const userSchema = new Schema(
 		email: { type: String, required: true, unique: true },
 		password: { type: String, required: true },
 		secretKey: { type: String, default: '' },
-		apiKey: { type: String, default: '' },
+		authorizationKey: { type: String, default: '' },
 		db: { type: String, enum: ['dbconnect1', 'dbconnect2'], required: true, default: 'dbconnect1' },
 	},
 	{

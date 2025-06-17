@@ -5,21 +5,33 @@ import appRoutes from './routes/appRoutes.js'
 import userRoutes from './routes/userRoutes.js'
 import cron from 'node-cron'
 import axios from 'axios'
+import authMiddleware from './middleware/middleware.js'
+import rateLimit from 'express-rate-limit' // Import express-rate-limit
 
 const app = express()
 connectDB()
 
 app.use(express.json())
 
+// Set up rate limiting: Limit the number of requests a client can make
+const limiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutes window
+	max: 100, // Limit each IP to 100 requests per windowMs
+	message: 'Too many requests, please try again later.',
+})
+
+// Apply rate limiter to all routes (can be adjusted to limit only specific routes)
+app.use(limiter)
+
 app.use(
 	cors({
-		origin: ['http://localhost:3000', 'https://dbconnect-ten.vercel.app'], // Allow multiple origins
-		methods: ['GET', 'POST', 'PUT', 'DELETE'],
-		credentials: true,
+		origin: '*', // Allow all origins
+		methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allow the necessary HTTP methods
+		credentials: true, // Allow cookies and credentials (for JWT tokens, etc.)
 	})
 )
 
-app.use('/api/app', appRoutes)
+app.use('/api/app', authMiddleware, appRoutes)
 app.use('/api/user', userRoutes)
 
 // Health check route
